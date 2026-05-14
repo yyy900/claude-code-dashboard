@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>claude-code-dashboard — see everything Claude Code keeps on disk</title>
+<meta name="description" content="Local control panel for Claude Code. Plugins, skills, hooks, sessions, memory — one UI. Edit CLAUDE.md inline. Add hooks back to settings.json. ~1800 LOC, pure Python stdlib." />
+<meta property="og:title" content="claude-code-dashboard" />
+<meta property="og:description" content="See everything Claude Code keeps on disk — in one panel." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0d0c0a;
+    --bg-warm: #F0EEE6;
+    --surface: #15140f;
+    --card: #1c1a14;
+    --border: #2a2620;
+    --text: #f5efe0;
+    --text-dim: #968a76;
+    --text-faint: #5c544a;
+    --accent: #E07A4F;
+    --accent-bright: #FF8C5A;
+    --accent-soft: rgba(224,122,79,0.15);
+    --orange: #C15F3C;
+    --ok: #8FB55F;
+    --purple: #B188D0;
+    --pink: #E89AB0;
+    --warm-text: #1A1814;
+    --warm-dim: #6B6055;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 "Inter", -apple-system, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", monospace; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--accent-bright); }
+  ::selection { background: var(--accent); color: var(--bg); }
+
+  /* ============ MESH BG ============ */
+  .mesh {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 20%, rgba(224,122,79,0.35), transparent 60%),
+      radial-gradient(ellipse 55% 45% at 80% 30%, rgba(177,136,208,0.22), transparent 60%),
+      radial-gradient(ellipse 70% 55% at 50% 90%, rgba(143,181,95,0.18), transparent 60%),
+      radial-gradient(ellipse 40% 40% at 90% 80%, rgba(232,154,176,0.18), transparent 60%);
+    animation: drift 22s ease-in-out infinite alternate;
+    filter: blur(40px);
+  }
+  .mesh::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 50%, transparent 30%, rgba(13,12,10,0.75) 100%);
+  }
+  @keyframes drift {
+    0%   { transform: translate(-4%, -2%) scale(1) rotate(0deg); }
+    50%  { transform: translate( 4%,  3%) scale(1.08) rotate(2deg); }
+    100% { transform: translate(-2%,  2%) scale(1.04) rotate(-1.5deg); }
+  }
+  /* film grain */
+  .grain {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0.06;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence baseFrequency='0.9' /></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.7'/></svg>");
+    mix-blend-mode: overlay;
+  }
+
+  /* ============ NAV ============ */
+  nav.top {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 36px;
+    backdrop-filter: blur(20px) saturate(160%);
+    background: rgba(13,12,10,0.55);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  nav .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 15px; letter-spacing: -0.01em;
+    font-family: "JetBrains Mono", monospace;
+  }
+  nav .brand .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 16px var(--accent), 0 0 4px var(--accent);
+  }
+  nav .links { display: flex; gap: 24px; align-items: center; }
+  nav .links a {
+    color: var(--text-dim); font-size: 14px; font-weight: 500;
+    transition: color 0.15s;
+  }
+  nav .links a:hover { color: var(--text); }
+  nav .links .gh-btn {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--accent); color: #0d0c0a;
+    padding: 8px 16px; border-radius: 100px;
+    font-weight: 600;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  nav .links .gh-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(224,122,79,0.4);
+    color: #0d0c0a;
+  }
+
+  /* ============ HERO ============ */
+  .hero {
+    position: relative; z-index: 2;
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 120px 24px 80px;
+    text-align: center;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 6px 14px;
+    background: var(--accent-soft);
+    border: 1px solid rgba(224,122,79,0.3);
+    border-radius: 100px;
+    color: var(--accent-bright);
+    font-size: 13px; font-weight: 500;
+    margin-bottom: 28px;
+  }
+  .pill::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  h1 {
+    font-family: "JetBrains Mono", monospace;
+    font-size: clamp(48px, 8vw, 124px);
+    font-weight: 800;
+    letter-spacing: -0.05em;
+    line-height: 1;
+    margin-bottom: 28px;
+    max-width: 1100px;
+  }
+  h1 .accent {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-bright) 40%, var(--pink) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero p.tagline {
+    font-size: clamp(20px, 2.2vw, 28px);
+    color: var(--text-dim);
+    max-width: 720px;
+    margin-bottom: 44px;
+    line-height: 1.4;
+  }
+  .hero p.tagline b { color: var(--text); font-weight: 600; }
+
+  .cta-row {
+    display: flex; gap: 14px; flex-wrap: wrap; justify-content: center;
+    margin-bottom: 56px;
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 14px 26px;
+    border-radius: 12px;
+    font-weight: 600; font-size: 15px;
+    border: 1px solid transparent;
+    transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+    cursor: pointer;
+  }
+  .btn.primary {
+    background: var(--accent); color: #0d0c0a;
+  }
+  .btn.primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 32px rgba(224,122,79,0.45);
+    color: #0d0c0a;
+  }
+  .btn.secondary {
+    background: transparent;
+    border-color: rgba(255,255,255,0.15);
+    color: var(--text);
+  }
+  .btn.secondary:hover {
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(255,255,255,0.25);
+    transform: translateY(-2px);
+    color: var(--text);
+  }
+  .btn svg { width: 18px; height: 18px; }
+
+  .hero-terminal {
+    background: rgba(15,14,11,0.85);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 14px;
+    padding: 16px 24px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 14px;
+    color: var(--text);
+    backdrop-filter: blur(20px);
+    box-shadow: 0 24px 64px rgba(0,0,0,0.4);
+  }
+  .hero-terminal .prompt { color: var(--accent); }
+  .hero-terminal .blink {
+    display: inline-block; width: 8px; height: 16px;
+    background: var(--accent); vertical-align: -3px; margin-left: 4px;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+
+  /* hero demo video */
+  .hero-demo {
+    margin-top: 80px;
+    max-width: 1100px; width: 100%;
+    border-radius: 20px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--surface);
+    box-shadow:
+      0 40px 100px rgba(0,0,0,0.6),
+      0 0 0 1px rgba(224,122,79,0.1),
+      0 0 80px rgba(224,122,79,0.12);
+    position: relative;
+  }
+  .hero-demo .browser-bar {
+    display: flex; gap: 8px; align-items: center;
+    padding: 12px 16px;
+    background: rgba(0,0,0,0.3);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .hero-demo .browser-bar .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+  }
+  .hero-demo .browser-bar .dot.r { background: #ff5f57; }
+  .hero-demo .browser-bar .dot.y { background: #febc2e; }
+  .hero-demo .browser-bar .dot.g { background: #28c840; }
+  .hero-demo .browser-bar .url {
+    margin-left: 16px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: var(--text-faint);
+  }
+  .hero-demo video { display: block; width: 100%; }
+
+  /* ============ SECTIONS ============ */
+  section {
+    position: relative; z-index: 2;
+    padding: 140px 24px;
+  }
+  .container {
+    max-width: 1200px; margin: 0 auto;
+  }
+  .section-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    color: var(--accent);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    font-weight: 600;
+  }
+  .section-tag::before {
+    content: ''; width: 28px; height: 1px; background: var(--accent);
+  }
+  h2 {
+    font-size: clamp(40px, 5vw, 64px);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin-bottom: 24px;
+    max-width: 800px;
+  }
+  h2 .accent {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--pink) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lead {
+    font-size: 20px;
+    color: var(--text-dim);
+    max-width: 700px;
+    line-height: 1.55;
+    margin-bottom: 56px;
+  }
+
+  /* ============ PAIN POINTS ============ */
+  .pain-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 880px) { .pain-grid { grid-template-columns: 1fr; } }
+  .pain {
+    padding: 32px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .pain::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+  }
+  .pain .num {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 48px;
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .pain .num .unit { font-size: 18px; color: var(--text-dim); margin-left: 6px; }
+  .pain .label {
+    font-size: 14px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 14px; font-weight: 600;
+  }
+  .pain h3 {
+    font-size: 19px; font-weight: 600; color: var(--text);
+    margin-bottom: 10px;
+  }
+  .pain p { color: var(--text-dim); font-size: 15px; line-height: 1.55; }
+  .pain code {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px;
+    background: rgba(255,255,255,0.05);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--accent-bright);
+  }
+
+  /* ============ BENTO ============ */
+  .bento {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    grid-auto-rows: 200px;
+    gap: 14px;
+  }
+  @media (max-width: 980px) {
+    .bento { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 230px; }
+    .bento .b { grid-column: span 1 !important; grid-row: span 1 !important; }
+  }
+  .b {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.3s cubic-bezier(0.2,0.8,0.2,1), border-color 0.2s;
+    will-change: transform;
+  }
+  .b:hover {
+    border-color: rgba(224,122,79,0.4);
+  }
+  .b .b-label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .b h3 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+  .b p { font-size: 14px; color: var(--text-dim); line-height: 1.5; }
+  .b-l-2 { grid-column: span 4; grid-row: span 2; }
+  .b-l-3 { grid-column: span 2; grid-row: span 2; }
+  .b-w-3 { grid-column: span 3; }
+  .b-w-2 { grid-column: span 2; }
+  .b-w-4 { grid-column: span 4; }
+
+  /* bento visuals */
+  .mock-tabs {
+    margin-top: 14px; display: flex; gap: 4px;
+    border-bottom: 1px solid var(--border); padding-bottom: 8px;
+  }
+  .mock-tab {
+    padding: 6px 10px; font-size: 11px;
+    color: var(--text-faint);
+    font-weight: 500;
+  }
+  .mock-tab.on { color: var(--accent); border-bottom: 2px solid var(--accent); margin-bottom: -10px; padding-bottom: 8px; }
+  .mock-cards { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .mock-card {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .mock-card b { font-weight: 600; color: var(--text); }
+  .mock-card .tag {
+    font-size: 9px; padding: 1px 6px; border-radius: 8px;
+    background: var(--accent-soft); color: var(--accent-bright);
+  }
+  .mock-card .tag.ok { background: rgba(143,181,95,0.15); color: var(--ok); }
+  .mock-toggle {
+    margin-left: auto; width: 22px; height: 12px; border-radius: 10px;
+    background: var(--ok); position: relative;
+  }
+  .mock-toggle::after {
+    content: ''; position: absolute; top: 1px; left: 11px; width: 10px; height: 10px;
+    border-radius: 50%; background: #fff;
+  }
+
+  .pulse-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--ok);
+    display: inline-block; margin-right: 6px;
+    animation: pulseDot 1.8s infinite;
+  }
+  @keyframes pulseDot {
+    0%,100% { box-shadow: 0 0 0 0 rgba(143,181,95,0.6); }
+    70% { box-shadow: 0 0 0 8px rgba(143,181,95,0); }
+  }
+
+  .feed-row {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .feed-row .t { color: var(--text-faint); }
+  .feed-row .k {
+    background: var(--accent-soft); color: var(--accent-bright);
+    padding: 1px 6px; border-radius: 6px; font-size: 9px;
+  }
+  .feed-row .ok-pill {
+    background: rgba(143,181,95,0.15); color: var(--ok);
+    padding: 1px 6px; border-radius: 6px; font-size: 9px; margin-left: auto;
+  }
+
+  /* ============ ARCH ============ */
+  .arch-stack {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 880px) { .arch-stack { grid-template-columns: 1fr; } }
+  .arch-table {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+    position: relative;
+    overflow: hidden;
+  }
+  .arch-table::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: var(--accent);
+    opacity: 0.6;
+  }
+  .arch-table .name {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 20px; font-weight: 700;
+    color: var(--accent-bright); margin-bottom: 14px;
+  }
+  .arch-table .cols {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px; color: var(--text-dim); line-height: 1.8;
+  }
+  .arch-table .cols b { color: var(--text); font-weight: 600; }
+  .arch-table .desc {
+    color: var(--text-dim); font-size: 13px;
+    margin-top: 14px; line-height: 1.55;
+    border-top: 1px solid var(--border); padding-top: 12px;
+  }
+  .arch-summary {
+    text-align: center;
+    margin-top: 36px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 18px;
+    color: var(--text-dim);
+  }
+  .arch-summary .accent { color: var(--accent-bright); font-weight: 700; }
+
+  /* ============ QUICK START ============ */
+  .qs-code {
+    background: #0a0907;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 28px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 15px;
+    line-height: 1.85;
+    position: relative;
+    overflow: hidden;
+  }
+  .qs-code::before {
+    content: '$ bash'; position: absolute; top: 12px; right: 16px;
+    font-size: 11px; color: var(--text-faint); letter-spacing: 0.06em;
+  }
+  .qs-code .prompt { color: var(--accent); user-select: none; }
+  .qs-code .cmd { color: var(--text); }
+  .qs-code .comment { color: var(--text-faint); }
+  .qs-code .arg { color: var(--purple); }
+  .copy-btn {
+    position: absolute; top: 10px; right: 60px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .copy-btn:hover { color: var(--text); background: rgba(255,255,255,0.12); }
+  .copy-btn.done { color: var(--ok); border-color: var(--ok); }
+
+  /* ============ STATS ============ */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-top: 36px;
+  }
+  @media (max-width: 720px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    text-align: center;
+  }
+  .stat-card .num {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 64px; font-weight: 800;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--pink) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    letter-spacing: -0.04em; line-height: 1;
+  }
+  .stat-card .lbl {
+    font-size: 13px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-top: 12px; font-weight: 500;
+  }
+
+  /* ============ FINAL CTA ============ */
+  .final {
+    text-align: center;
+    padding: 160px 24px 120px;
+  }
+  .final h2 { margin: 0 auto 24px; }
+  .final .lead { margin: 0 auto 40px; }
+
+  /* footer */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 13px;
+    position: relative; z-index: 2;
+  }
+  footer a { color: var(--text-dim); margin: 0 8px; }
+
+  /* fade-in on scroll */
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.7s, transform 0.7s; }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="mesh"></div>
+<div class="grain"></div>
+
+<nav class="top">
+  <a href="#" class="brand"><span class="dot"></span>claude-code-dashboard</a>
+  <div class="links">
+    <a href="#features">Features</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#start">Quick start</a>
+    <a class="gh-btn" href="https://github.com/yyy900/claude-code-dashboard" target="_blank">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.2.9 2.4v3.5c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
+      Star
+    </a>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="pill">·  open-source · MIT</div>
+  <h1>Everything Claude Code<br>keeps on disk <span class="accent">in one panel.</span></h1>
+  <p class="tagline">
+    Plugins, skills, hooks, sessions, memory — read straight from <b>~/.claude</b>, rendered in a real UI.
+    Edit <code class="mono" style="background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px;font-size:0.9em">CLAUDE.md</code> inline. Add hooks back to <code class="mono" style="background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px;font-size:0.9em">settings.json</code>.
+  </p>
+  <div class="cta-row">
+    <a class="btn primary" href="https://github.com/yyy900/claude-code-dashboard" target="_blank">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.2.9 2.4v3.5c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
+      View on GitHub
+    </a>
+    <a class="btn secondary" href="#start">Get started →</a>
+  </div>
+  <div class="hero-terminal">
+    <span class="prompt">$</span> git clone https://github.com/yyy900/claude-code-dashboard &amp;&amp; cd claude-code-dashboard &amp;&amp; python3 server.py<span class="blink"></span>
+  </div>
+
+  <div class="hero-demo">
+    <div class="browser-bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="url">http://127.0.0.1:7780</span>
+    </div>
+    <video src="demo.mp4" autoplay muted loop playsinline></video>
+  </div>
+</section>
+
+<!-- ============ PAIN ============ -->
+<section id="why">
+  <div class="container">
+    <span class="section-tag reveal">The pile-up</span>
+    <h2 class="reveal">You've been using Claude Code for months.<br/><span class="accent">Look what's on disk.</span></h2>
+    <p class="lead reveal"><code class="mono" style="background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px">/exit</code> doesn't delete a thing. Auto-memory keeps growing. Skills you forgot you installed are still loading every session and burning tokens.</p>
+
+    <div class="pain-grid">
+      <div class="pain reveal">
+        <div class="label">SESSIONS · ~/.claude/projects</div>
+        <div class="num"><span id="c-sess">0</span></div>
+        <h3>jsonl transcripts on disk</h3>
+        <p>Every conversation, kept forever. <code>/exit</code> doesn't touch them. No built-in way to browse them.</p>
+      </div>
+      <div class="pain reveal">
+        <div class="label">AUTO-MEMORY · projects/*/memory</div>
+        <div class="num"><span id="c-mem">0</span></div>
+        <h3>files the agent wrote about you</h3>
+        <p>Reloaded into context every session in that project directory. Have you read them lately?</p>
+      </div>
+      <div class="pain reveal">
+        <div class="label">SKILLS / PLUGINS / HOOKS</div>
+        <div class="num"><span id="c-skl">0</span></div>
+        <h3>still loading on every prompt</h3>
+        <p>Installed, forgotten, still in the manifest. Each one costs tokens at session start.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FEATURES (BENTO) ============ -->
+<section id="features">
+  <div class="container">
+    <span class="section-tag reveal">What it does</span>
+    <h2 class="reveal">7 tabs over <span class="accent">3 SQL tables.</span></h2>
+    <p class="lead reveal">Twelve "modules" most control planes spec out collapse onto entity + run + event. Adding a feature is usually one SQL filter, not one new table.</p>
+
+    <div class="bento">
+
+      <div class="b b-l-2 reveal tilt">
+        <div class="b-label">PLUGINS · SKILLS · HOOKS</div>
+        <h3>Unified registry</h3>
+        <p>Read straight from <span class="mono" style="color:var(--accent-bright)">~/.claude/plugins</span>, <span class="mono" style="color:var(--accent-bright)">/skills</span>, <span class="mono" style="color:var(--accent-bright)">settings.json</span>. Toggle, search, edit config inline.</p>
+        <div class="mock-tabs">
+          <div class="mock-tab">Plugins</div>
+          <div class="mock-tab on">Skills</div>
+          <div class="mock-tab">Hooks</div>
+        </div>
+        <div class="mock-cards">
+          <div class="mock-card"><b>atomize</b> <span class="tag">skill</span> <span style="color:var(--text-faint);font-size:11px">user-scope · read</span> <span class="mock-toggle"></span></div>
+          <div class="mock-card"><b>codex</b> <span class="tag">skill</span> <span style="color:var(--text-faint);font-size:11px">in gstack · network</span> <span class="mock-toggle"></span></div>
+        </div>
+      </div>
+
+      <div class="b b-l-3 reveal tilt">
+        <div class="b-label">SESSIONS</div>
+        <h3>Every transcript Claude Code kept.</h3>
+        <p>Grouped by recency. Click → read the full conversation. Active sessions pulse.</p>
+        <div class="mock-cards">
+          <div class="mock-card"><span class="pulse-dot"></span><b style="color:var(--accent-bright)">fc483419</b> <span style="font-size:10px;color:var(--text-faint);margin-left:auto">1s ago</span></div>
+          <div class="mock-card"><b style="color:var(--text-dim)">399d32b9</b> <span style="font-size:10px;color:var(--text-faint);margin-left:auto">12m</span></div>
+          <div class="mock-card"><b style="color:var(--text-dim)">232c0276</b> <span style="font-size:10px;color:var(--text-faint);margin-left:auto">1h</span></div>
+        </div>
+      </div>
+
+      <div class="b b-w-3 reveal tilt">
+        <div class="b-label">MEMORY</div>
+        <h3>Edit CLAUDE.md inline.</h3>
+        <p>Edits write back to disk under a whitelist. Auto-memory across every project — read, edit, prune.</p>
+      </div>
+
+      <div class="b b-w-3 reveal tilt">
+        <div class="b-label">LIVE · SSE</div>
+        <h3>Decide permission requests live.</h3>
+        <div class="feed-row"><span class="t">09:02</span> <span class="k">permission</span> Bash · git push <span class="ok-pill">allow</span></div>
+        <div class="feed-row"><span class="t">09:02</span> <span class="k">resource</span> file_read · CHANGELOG.md</div>
+      </div>
+
+      <div class="b b-w-4 reveal tilt">
+        <div class="b-label">HOOKS · WRITE-BACK</div>
+        <h3>Add a hook in 20 seconds.</h3>
+        <p>Pick event (UserPromptSubmit, PreToolUse, …), paste bash, save. Panel drops the script into <span class="mono" style="color:var(--accent-bright)">~/.claude/panel-hooks/</span> with <code>chmod +x</code> and appends to <span class="mono" style="color:var(--accent-bright)">settings.json</span> — with <span class="mono">.panel.bak</span> backup.</p>
+      </div>
+
+      <div class="b b-w-2 reveal tilt">
+        <div class="b-label">STDLIB ONLY</div>
+        <h3 style="font-size:32px;background:linear-gradient(135deg,var(--accent),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent">No pip<br/>install.</h3>
+        <p>Python stdlib + vanilla JS. No node, no react, no build step.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ ARCH ============ -->
+<section id="architecture">
+  <div class="container">
+    <span class="section-tag reveal">Data dominates</span>
+    <h2 class="reveal">Three tables. <span class="accent">Twelve modules collapse.</span></h2>
+    <p class="lead reveal">"Permission grant" is an entity. "Setting" is an entity. A session is just a run with no parent. Audit views are <code class="mono" style="background:rgba(255,255,255,0.06);padding:2px 8px;border-radius:6px">SELECT * FROM event WHERE kind = ?</code> with filters.</p>
+
+    <div class="arch-stack">
+      <div class="arch-table reveal">
+        <div class="name">entity</div>
+        <div class="cols">
+          <b>id</b> · primary key<br>
+          <b>kind</b> · plugin | skill | hook | setting | permission_grant<br>
+          <b>name</b><br>
+          <b>parent_id</b> · skill belongs to plugin<br>
+          <b>enabled</b><br>
+          <b>config</b> · JSON
+        </div>
+        <div class="desc">Everything you "install" or configure lives here. One table, one toggle column.</div>
+      </div>
+      <div class="arch-table reveal">
+        <div class="name">run</div>
+        <div class="cols">
+          <b>id</b><br>
+          <b>parent_run_id</b> · NULL = session root<br>
+          <b>entity_id</b><br>
+          <b>status</b> · running | success | failed | …<br>
+          <b>input · output · error</b><br>
+          <b>started_at · ended_at</b>
+        </div>
+        <div class="desc">A session is just a run with parent_run_id IS NULL. Children nest underneath.</div>
+      </div>
+      <div class="arch-table reveal">
+        <div class="name">event</div>
+        <div class="cols">
+          <b>id</b><br>
+          <b>run_id</b><br>
+          <b>kind</b> · log | permission_request | resource_access | artifact<br>
+          <b>level</b> · debug | info | warn | error<br>
+          <b>payload</b> · JSON
+        </div>
+        <div class="desc">Logs, audits, permission decisions, files written — all here, distinguished by kind.</div>
+      </div>
+    </div>
+    <p class="arch-summary reveal">
+      <span class="accent">3 tables</span> · 5 indexes · <span class="accent">18 endpoints</span> · 7 tabs in the UI
+    </p>
+  </div>
+</section>
+
+<!-- ============ START ============ -->
+<section id="start">
+  <div class="container" style="max-width: 900px;">
+    <span class="section-tag reveal">Quick start</span>
+    <h2 class="reveal">Run it in <span class="accent">30 seconds.</span></h2>
+    <p class="lead reveal">No dependencies. macOS / Linux. Python 3.</p>
+
+    <div class="qs-code reveal" id="qs">
+      <button class="copy-btn" id="copy-btn">Copy</button>
+<span class="prompt">$</span> <span class="cmd">git clone</span> <span class="arg">https://github.com/yyy900/claude-code-dashboard</span>
+<span class="prompt">$</span> <span class="cmd">cd</span> <span class="arg">claude-code-dashboard</span>
+<span class="prompt">$</span> <span class="cmd">python3</span> <span class="arg">server.py</span>
+<span class="comment">› panel on http://127.0.0.1:7780</span>
+    </div>
+
+    <p class="lead reveal" style="margin-top:36px">
+      Open the URL, click <b style="color:var(--text)">Import from ~/.claude</b> in any of the Plugins / Skills / Hooks tabs. Your real data flows in. The Sessions and Memory tabs read your disk directly — no import needed.
+    </p>
+  </div>
+</section>
+
+<!-- ============ STATS ============ -->
+<section>
+  <div class="container">
+    <span class="section-tag reveal">By the numbers</span>
+    <h2 class="reveal">Small surface. <span class="accent">Big reach.</span></h2>
+
+    <div class="stats">
+      <div class="stat-card reveal">
+        <div class="num"><span id="s-loc">0</span></div>
+        <div class="lbl">Lines of code</div>
+      </div>
+      <div class="stat-card reveal">
+        <div class="num"><span id="s-tabs">0</span></div>
+        <div class="lbl">UI tabs</div>
+      </div>
+      <div class="stat-card reveal">
+        <div class="num"><span id="s-api">0</span></div>
+        <div class="lbl">REST endpoints</div>
+      </div>
+      <div class="stat-card reveal">
+        <div class="num"><span id="s-deps">0</span></div>
+        <div class="lbl">Dependencies</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINAL ============ -->
+<section class="final">
+  <div class="container" style="max-width:720px">
+    <span class="section-tag reveal">Take a look</span>
+    <h2 class="reveal">See what Claude Code<br><span class="accent">remembers about you.</span></h2>
+    <p class="lead reveal">It's all there. You just need a window into it.</p>
+    <div class="cta-row reveal" style="justify-content:center">
+      <a class="btn primary" href="https://github.com/yyy900/claude-code-dashboard" target="_blank">
+        ⭐ Star on GitHub
+      </a>
+      <a class="btn secondary" href="https://github.com/yyy900/claude-code-dashboard/blob/main/README.md" target="_blank">
+        Read the docs →
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>MIT · made by <a href="https://x.com/TheZero_yf" target="_blank">@TheZero_yf</a> · <a href="https://github.com/yyy900/claude-code-dashboard">github.com/yyy900/claude-code-dashboard</a></p>
+</footer>
+
+<script>
+  /* === scroll reveal === */
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    }
+  }, { threshold: 0.15 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  /* === count-up on scroll === */
+  function countUp(id, end, dur = 1400) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const start = performance.now();
+    function frame(now) {
+      const t = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = Math.round(end * eased);
+      if (t < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  const onSeen = (id, cb) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const o = new IntersectionObserver((ents) => {
+      for (const e of ents) {
+        if (e.isIntersecting) { cb(); o.disconnect(); break; }
+      }
+    }, { threshold: 0.4 });
+    o.observe(el);
+  };
+  onSeen('c-sess', () => countUp('c-sess', 69));
+  onSeen('c-mem',  () => countUp('c-mem', 54));
+  onSeen('c-skl',  () => countUp('c-skl', 56));
+  onSeen('s-loc',  () => countUp('s-loc', 1800, 1800));
+  onSeen('s-tabs', () => countUp('s-tabs', 7));
+  onSeen('s-api',  () => countUp('s-api', 18));
+  onSeen('s-deps', () => countUp('s-deps', 0));
+
+  /* === 3D tilt on bento === */
+  document.querySelectorAll('.tilt').forEach(el => {
+    el.addEventListener('mousemove', (e) => {
+      const r = el.getBoundingClientRect();
+      const px = (e.clientX - r.left) / r.width - 0.5;
+      const py = (e.clientY - r.top) / r.height - 0.5;
+      el.style.transform = `perspective(900px) rotateY(${px * 6}deg) rotateX(${-py * 6}deg) translateY(-3px)`;
+    });
+    el.addEventListener('mouseleave', () => {
+      el.style.transform = '';
+    });
+  });
+
+  /* === copy quick-start === */
+  const copyBtn = document.getElementById('copy-btn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      const text = 'git clone https://github.com/yyy900/claude-code-dashboard\ncd claude-code-dashboard\npython3 server.py';
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = '✓ Copied';
+      copyBtn.classList.add('done');
+      setTimeout(() => { copyBtn.textContent = 'Copy'; copyBtn.classList.remove('done'); }, 1800);
+    });
+  }
+</script>
+</body>
+</html>
