@@ -282,6 +282,14 @@ def import_real(handler):
     j(handler, 200, {"imported": n})
 
 
+def clear_real(handler):
+    conn = db()
+    n = conn.execute("DELETE FROM entity WHERE json_extract(config,'$.source')='real'").rowcount
+    conn.commit()
+    conn.close()
+    j(handler, 200, {"cleared": n})
+
+
 def list_sessions(handler):
     import adapter
     j(handler, 200, adapter.scan_sessions())
@@ -514,6 +522,7 @@ class H(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith("/api/entities/"):  delete_entity(self, int(p.rsplit("/",1)[1]))
         elif p.startswith("/api/events/"):  delete_event(self, int(p.rsplit("/",1)[1]))
+        elif p == "/api/import":            clear_real(self)
         else: j(self, 404, {"error":"not found"})
 
 

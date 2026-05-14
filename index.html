@@ -305,6 +305,7 @@ async function renderEntities(kind) {
       ${fchip('all', 'All')}
       <span style="flex:1"></span>
       <button class="btn" id="import-real">Import from ~/.claude</button>
+      <button class="btn warn" id="clear-real">Clear imports</button>
       ${kind === 'plugin' ? `<button class="btn primary" id="install">+ Install plugin</button>` : ''}
       ${kind === 'hook' ? `<button class="btn primary" id="addhook">+ Add hook</button>` : ''}
     </div>
@@ -317,6 +318,14 @@ async function renderEntities(kind) {
     const r = await api('/api/import', {method:'POST'});
     openDialog(`<h3>Imported ${r.imported} real entities</h3>
       <p class="sub">Read from <code>~/.claude/plugins</code>, <code>~/.claude/skills</code>, and <code>~/.claude/settings.json</code>.</p>
+      <div class="dlg-actions"><button class="btn primary" data-close>OK</button></div>`);
+    renderEntities(kind);
+  };
+  $('#clear-real').onclick = async () => {
+    if (!confirm('Remove all entities imported from ~/.claude? (Demo seed and panel-added items stay.)')) return;
+    const r = await api('/api/import', {method: 'DELETE'});
+    openDialog(`<h3>Cleared ${r.cleared} imported entities</h3>
+      <p class="sub">Demo seed and anything added inside panel (recorder, manual installs) are untouched.</p>
       <div class="dlg-actions"><button class="btn primary" data-close>OK</button></div>`);
     renderEntities(kind);
   };
