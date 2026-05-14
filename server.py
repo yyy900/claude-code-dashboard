@@ -30,20 +30,16 @@ def init_db():
 
 def seed(conn):
     c = conn.execute
-    gstack = c("INSERT INTO entity(kind,name,config) VALUES(?,?,?)",
-               ("plugin", "gstack", json.dumps({"version":"0.4.1","author":"openonion","description":"Dev workflow toolkit","risk":"low","permissions":["read","write","shell","network"]}))).lastrowid
-    memo = c("INSERT INTO entity(kind,name,config) VALUES(?,?,?)",
-             ("plugin", "lossless-mem", json.dumps({"version":"0.1.0","author":"yfshuu","description":"Agent memory layer","risk":"medium","permissions":["read","write","db_read","db_write"]}))).lastrowid
+    ex = c("INSERT INTO entity(kind,name,config) VALUES(?,?,?)",
+           ("plugin", "example-plugin", json.dumps({"version":"0.1.0","author":"example","description":"Sample plugin for demonstrating the panel","risk":"low","permissions":["read","write","shell","network"]}))).lastrowid
     ship = c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-             ("skill","ship",gstack,json.dumps({"description":"Ship workflow","permissions":["shell","network"],"input_schema":{"type":"object","properties":{"branch":{"type":"string"}}},"output_schema":{"type":"object"}}))).lastrowid
+             ("skill","sample-ship",ex,json.dumps({"description":"Sample skill: deploy workflow","permissions":["shell","network"],"input_schema":{"type":"object","properties":{"branch":{"type":"string"}}},"output_schema":{"type":"object"}}))).lastrowid
     c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-      ("skill","review",gstack,json.dumps({"description":"PR review","permissions":["read","network"]})))
+      ("skill","sample-review",ex,json.dumps({"description":"Sample skill: PR review","permissions":["read","network"]})))
     c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-      ("skill","mem-recall",memo,json.dumps({"description":"Recall memory","permissions":["read","db_read"]})))
+      ("hook","PostToolUse:Edit",ex,json.dumps({"event":"PostToolUse","match":"Edit","mode":"advisory","priority":10,"permissions":["read"]})))
     c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-      ("hook","PostToolUse:Edit",gstack,json.dumps({"event":"PostToolUse","match":"Edit","mode":"advisory","priority":10,"permissions":["read"]})))
-    c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-      ("hook","PreToolUse:Bash",gstack,json.dumps({"event":"PreToolUse","match":"Bash","mode":"blocking","priority":1,"permissions":["read","shell"]})))
+      ("hook","PreToolUse:Bash",ex,json.dumps({"event":"PreToolUse","match":"Bash","mode":"blocking","priority":1,"permissions":["read","shell"]})))
     settings = [
         ("plugin_dir","~/.claude/plugins"),
         ("workspace_dir","~/coding"),
