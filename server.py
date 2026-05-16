@@ -23,23 +23,12 @@ def init_db():
         return
     conn = db()
     conn.executescript(SCHEMA.read_text())
-    seed(conn)
+    seed_settings(conn)
     conn.commit()
     conn.close()
 
 
-def seed(conn):
-    c = conn.execute
-    ex = c("INSERT INTO entity(kind,name,config) VALUES(?,?,?)",
-           ("plugin", "example-plugin", json.dumps({"version":"0.1.0","author":"example","description":"Sample plugin for demonstrating the panel","risk":"low","permissions":["read","write","shell","network"]}))).lastrowid
-    ship = c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-             ("skill","sample-ship",ex,json.dumps({"description":"Sample skill: deploy workflow","permissions":["shell","network"],"input_schema":{"type":"object","properties":{"branch":{"type":"string"}}},"output_schema":{"type":"object"}}))).lastrowid
-    c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-      ("skill","sample-review",ex,json.dumps({"description":"Sample skill: PR review","permissions":["read","network"]})))
-    c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-      ("hook","PostToolUse:Edit",ex,json.dumps({"event":"PostToolUse","match":"Edit","mode":"advisory","priority":10,"permissions":["read"]})))
-    c("INSERT INTO entity(kind,name,parent_id,config) VALUES(?,?,?,?)",
-      ("hook","PreToolUse:Bash",ex,json.dumps({"event":"PreToolUse","match":"Bash","mode":"blocking","priority":1,"permissions":["read","shell"]})))
+def seed_settings(conn):
     settings = [
         ("plugin_dir","~/.claude/plugins"),
         ("workspace_dir","~/coding"),
@@ -57,22 +46,8 @@ def seed(conn):
         ("developer_mode",False),
     ]
     for k, v in settings:
-        c("INSERT INTO entity(kind,name,config) VALUES(?,?,?)", ("setting", k, json.dumps({"value": v})))
-    root = c("INSERT INTO run(entity_id,trigger,status,input,started_at,ended_at) VALUES(?,?,?,?,datetime('now','-5 minutes'),datetime('now','-4 minutes'))",
-             (ship,"user","success",json.dumps({"branch":"main"}))).lastrowid
-    c("INSERT INTO event(run_id,kind,level,payload) VALUES(?,?,?,?)", (root,"log","info",json.dumps({"msg":"ship started"})))
-    c("INSERT INTO event(run_id,kind,payload) VALUES(?,?,?)", (root,"permission_request",json.dumps({"type":"shell","target":"git push","decision":"allow_session"})))
-    c("INSERT INTO event(run_id,kind,payload) VALUES(?,?,?)", (root,"resource_access",json.dumps({"kind":"shell","cmd":"git push","allowed":True})))
-    c("INSERT INTO event(run_id,kind,payload) VALUES(?,?,?)", (root,"resource_access",json.dumps({"kind":"file_read","path":"CHANGELOG.md","allowed":True})))
-    c("INSERT INTO event(run_id,kind,payload) VALUES(?,?,?)", (root,"resource_access",json.dumps({"kind":"network","host":"api.github.com","allowed":True})))
-    c("INSERT INTO event(run_id,kind,payload) VALUES(?,?,?)", (root,"artifact",json.dumps({"type":"diff","name":"changes.diff","size":2104,"preview":"--- a/foo.py\n+++ b/foo.py\n@@ -1,3 +1,3 @@\n-old\n+new"})))
-    c("INSERT INTO event(run_id,kind,level,payload) VALUES(?,?,?,?)", (root,"log","info",json.dumps({"msg":"PR opened"})))
-    c("INSERT INTO run(entity_id,trigger,status,input,error,started_at,ended_at) VALUES(?,?,?,?,?,datetime('now','-2 minutes'),datetime('now','-1 minutes'))",
-      (ship,"user","failed",json.dumps({"branch":"feat"}),"tests failed"))
-    waiting = c("INSERT INTO run(entity_id,trigger,status,input,started_at) VALUES(?,?,?,?,datetime('now','-10 seconds'))",
-                (ship,"user","running",json.dumps({"branch":"experiment"}))).lastrowid
-    c("INSERT INTO event(run_id,kind,payload) VALUES(?,?,?)",
-      (waiting,"permission_request",json.dumps({"type":"network","target":"https://api.openai.com","decision":"pending"})))
+        conn.execute("INSERT INTO entity(kind,name,config) VALUES(?,?,?)",
+                     ("setting", k, json.dumps({"value": v})))
 
 
 def j(handler, code, body):
@@ -291,6 +266,11 @@ def list_sessions(handler):
     j(handler, 200, adapter.scan_sessions())
 
 
+def skill_usage(handler):
+    import adapter
+    j(handler, 200, adapter.count_skill_usage())
+
+
 def get_session(handler, qs):
     import adapter
     path = qs.get("path", [""])[0]
@@ -477,6 +457,7 @@ class H(BaseHTTPRequestHandler):
         elif p.startswith("/api/artifacts/"): get_artifact(self, int(p.rsplit("/",1)[1]))
         elif p == "/api/settings":          get_settings(self)
         elif p == "/api/sessions":          list_sessions(self)
+        elif p == "/api/skills/usage":      skill_usage(self)
         elif p.startswith("/api/sessions/"): get_session(self, qs)
         elif p == "/api/memory":            list_memory(self)
         elif p == "/api/memory/file":       get_memory(self, qs)

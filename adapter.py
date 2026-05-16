@@ -12,7 +12,7 @@ prior real entities (preserves seed demo + history).
 """
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 CLAUDE_HOME = Path.home() / ".claude"
@@ -121,6 +121,51 @@ def read_session_meta(path):
         "size": p.stat().st_size,
         "mtime": iso_mtime(p),
     }
+
+
+def count_skill_usage(windows=(1, 7)):
+    if not PROJECTS_DIR.exists():
+        return {"windows": list(windows), "counts": {}}
+    now = datetime.now(timezone.utc)
+    cutoffs = {w: now - timedelta(days=w) for w in windows}
+    file_cutoff = now - timedelta(days=max(windows))
+    counts = {}
+    for proj in PROJECTS_DIR.iterdir():
+        if not proj.is_dir():
+            continue
+        for f in proj.glob("*.jsonl"):
+            if datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc) < file_cutoff:
+                continue
+            with open(f, errors="replace") as fh:
+                for line in fh:
+                    if '"Skill"' not in line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts_s = d.get("timestamp")
+                    msg = d.get("message")
+                    if not ts_s or not isinstance(msg, dict):
+                        continue
+                    content = msg.get("content")
+                    if not isinstance(content, list):
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(ts_s.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    for c in content:
+                        if not isinstance(c, dict) or c.get("type") != "tool_use" or c.get("name") != "Skill":
+                            continue
+                        sk = (c.get("input") or {}).get("skill")
+                        if not sk:
+                            continue
+                        slot = counts.setdefault(sk, {str(w): 0 for w in windows})
+                        for w, cutoff in cutoffs.items():
+                            if ts >= cutoff:
+                                slot[str(w)] += 1
+    return {"windows": list(windows), "counts": counts}
 
 
 def scan_sessions():

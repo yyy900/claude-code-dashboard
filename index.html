@@ -105,6 +105,20 @@
   .card details pre { margin-top: 6px; background: var(--surface); padding: 8px; border-radius: 4px;
                       overflow: auto; max-height: 240px; }
 
+  /* usage badge — skills tab */
+  .usage { display: inline-flex; align-items: stretch; gap: 0; border-radius: 6px;
+           overflow: hidden; border: 1px solid var(--border); background: var(--surface);
+           font-family: ui-monospace, "SF Mono", Menlo, monospace; line-height: 1; }
+  .usage .cell { display: flex; flex-direction: column; align-items: center; justify-content: center;
+                 padding: 4px 9px; gap: 2px; min-width: 44px; }
+  .usage .cell + .cell { border-left: 1px solid var(--border); }
+  .usage .n { font-size: 15px; font-weight: 700; color: var(--text-dim); }
+  .usage .lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+                color: var(--text-faint); font-family: inherit; }
+  .usage.hot { background: #FBEEE6; border-color: var(--accent); }
+  .usage.hot .n { color: var(--accent); }
+  .usage.hot .lbl { color: var(--accent); opacity: 0.75; }
+
   /* toggle */
   .toggle { background: var(--border); border: 0; border-radius: 14px; padding: 0;
             width: 38px; height: 22px; position: relative; cursor: pointer; transition: background 0.15s; }
@@ -231,6 +245,7 @@ const S = {
   enabledFilter: 'enabled',  // enabled | disabled | all
   selSession: null,
   selMemory: null,
+  skillUsage: {},  // skill name → {"1": n, "7": n}
 };
 
 document.querySelectorAll('nav button[data-tab]').forEach(b => b.onclick = () => {
@@ -281,6 +296,10 @@ async function renderEntities(kind) {
   const rows = await api(`/api/entities?kind=${kind}`);
   const allEnts = await api('/api/entities');
   const idMap = Object.fromEntries(allEnts.map(r => [r.id, r]));
+  if (kind === 'skill') {
+    try { S.skillUsage = (await api('/api/skills/usage')).counts || {}; }
+    catch { S.skillUsage = {}; }
+  }
 
   const enabledCount = rows.filter(r => r.enabled).length;
   const disabledCount = rows.length - enabledCount;
@@ -346,6 +365,13 @@ function renderEntList(rows, idMap, kind) {
     }
     return true;
   });
+  if (kind === 'skill') {
+    filtered.sort((a, b) => {
+      const ua = S.skillUsage[a.name] || {'7':0,'1':0};
+      const ub = S.skillUsage[b.name] || {'7':0,'1':0};
+      return (ub['7'] - ua['7']) || (ub['1'] - ua['1']) || a.name.localeCompare(b.name);
+    });
+  }
   if (!filtered.length) {
     $('#body').innerHTML = `<div class="empty-state">Nothing matches the current filter.</div>`;
     return;
@@ -367,6 +393,15 @@ function renderCard(e, idMap) {
   if (parent) meta.push(`<span class="chip">in ${escapeHtml(parent.name)}</span>`);
   if (cfg.scope) meta.push(`<span class="chip">${escapeHtml(cfg.scope)}-scope</span>`);
   if (e.kind === 'hook' && cfg.event) meta.push(`<span class="chip kind">${escapeHtml(cfg.event)}${cfg.matcher && cfg.matcher !== '*' ? ':' + escapeHtml(cfg.matcher) : ''}</span>`);
+  let usageBadge = '';
+  if (e.kind === 'skill') {
+    const u = S.skillUsage[e.name] || {'1': 0, '7': 0};
+    const hot = u['7'] > 0;
+    usageBadge = `<span class="usage ${hot ? 'hot' : ''}" title="Skill invocations recorded in ~/.claude/projects jsonl">
+      <span class="cell"><span class="n">${u['1']}</span><span class="lbl">/ day</span></span>
+      <span class="cell"><span class="n">${u['7']}</span><span class="lbl">/ week</span></span>
+    </span>`;
+  }
   if (e.kind === 'hook' && cfg.mode) meta.push(`<span class="chip">${escapeHtml(cfg.mode)}</span>`);
   if (cfg.author) {
     const a = typeof cfg.author === 'string' ? cfg.author : cfg.author.name;
@@ -379,6 +414,7 @@ function renderCard(e, idMap) {
       <span class="name">${escapeHtml(e.name)}</span>
       ${kindChip(e.kind)}
       <span class="spacer"></span>
+      ${usageBadge}
       <span class="sub">${e.enabled ? 'enabled' : 'disabled'}</span>
       <button class="toggle ${e.enabled?'on':''}" data-toggle="${e.id}" data-on="${e.enabled}" title="enable/disable"></button>
     </div>
